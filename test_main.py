@@ -12,6 +12,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 import main  # noqa: E402
+import telegram_client  # noqa: E402
 
 AUTH = {"Authorization": "Bearer test-api-key"}
 
@@ -111,3 +112,42 @@ def test_unlink_removes_account(client):
 def test_send_without_link_returns_404(client):
     response = client.post("/send", json={"user_id": 999, "text": "hi"}, headers=AUTH)
     assert response.status_code == 404
+
+
+def test_database_path_env_is_used_and_its_folder_is_created(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "DB_PATH", None)
+    target = tmp_path / "nested" / "dir" / "bot.db"
+    monkeypatch.setenv("DATABASE_PATH", str(target))
+
+    storage.init_db()
+    storage.upsert_link(7, 700, "someone")
+
+    assert target.exists()
+    assert storage.get_link(7)["chat_id"] == 700
+
+
+def test_confirmation_message_is_bilingual(client, monkeypatch):
+    sent = []
+    monkeypatch.setattr(telegram_client, "send_message", lambda chat_id, text: sent.append((chat_id, text)))
+    from signing import sign_user_id
+
+    token = sign_user_id(5, "test-link-secret")
+    response = client.post(
+        "/webhook",
+        json={"message": {"text": f"/start {token}", "chat": {"id": 55}, "from": {"username": "u"}}},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret"},
+    )
+    assert response.status_code == 200
+    assert "ulandi" in sent[0][1] and "linked" in sent[0][1]
+
+
+def test_send_answers_502_when_telegram_is_unreachable(client, monkeypatch):
+    import requests
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:abc")
+    monkeypatch.setattr(requests, "post", lambda *a, **k: (_ for _ in ()).throw(requests.ConnectionError("down")))
+    storage.upsert_link(9, 900, "x")
+
+    response = client.post("/send", json={"user_id": 9, "text": "hi"}, headers=AUTH)
+
+    assert response.status_code == 502

@@ -1,13 +1,21 @@
+import os
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-DB_PATH = Path(__file__).resolve().parent / "bot.db"
+DEFAULT_DB_PATH = Path(__file__).resolve().parent / "bot.db"
+# Overridable for tests. In deployment, point DATABASE_PATH at a persistent disk
+# (the file is SQLite, so it must live on storage that survives restarts).
+DB_PATH: Path | None = None
+
+
+def _db_path() -> Path:
+    return DB_PATH or Path(os.environ.get("DATABASE_PATH") or DEFAULT_DB_PATH)
 
 
 @contextmanager
 def _connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(_db_path())
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -17,6 +25,7 @@ def _connect():
 
 
 def init_db():
+    _db_path().parent.mkdir(parents=True, exist_ok=True)
     with _connect() as conn:
         conn.execute(
             """

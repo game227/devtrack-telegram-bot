@@ -1,12 +1,17 @@
 import os
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 
-import storage
-import telegram_client
-from signing import verify_token
+# Read .env (if present) before anything looks at the environment, so
+# `uvicorn main:app` works locally without exporting every variable by hand.
+load_dotenv()
+
+import storage  # noqa: E402
+import telegram_client  # noqa: E402
+from signing import verify_token  # noqa: E402
 
 
 @asynccontextmanager
@@ -93,7 +98,9 @@ async def webhook(request: Request):
     if user_id is None:
         try:
             telegram_client.send_message(
-                chat_id, "This link has expired. Go back to DevTrack Settings and try again."
+                chat_id,
+                "Havola muddati tugagan. DevTrack Sozlamalariga qaytib, qayta urinib ko'ring.\n"
+                "This link has expired. Go back to DevTrack Settings and try again.",
             )
         except telegram_client.TelegramAPIError:
             pass
@@ -101,7 +108,10 @@ async def webhook(request: Request):
 
     storage.upsert_link(user_id, chat_id, from_user.get("username", ""))
     try:
-        telegram_client.send_message(chat_id, "✅ Your Telegram is now linked to DevTrack.")
+        telegram_client.send_message(
+            chat_id,
+            "✅ Telegram DevTrack'ga ulandi.\n✅ Your Telegram is now linked to DevTrack.",
+        )
     except telegram_client.TelegramAPIError:
         pass  # linking already succeeded; the confirmation is best-effort
     return {"detail": "ok"}
