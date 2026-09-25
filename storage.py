@@ -33,36 +33,64 @@ def init_db():
                 devtrack_user_id INTEGER PRIMARY KEY,
                 chat_id INTEGER UNIQUE NOT NULL,
                 telegram_username TEXT NOT NULL DEFAULT '',
-                linked_at TEXT NOT NULL DEFAULT (datetime('now'))
+                linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+                lang TEXT NOT NULL DEFAULT '',
+                muted INTEGER NOT NULL DEFAULT 0
             )
             """
         )
+        # Databases created before language/mute existed get the columns added in place.
+        existing = {row["name"] for row in conn.execute("PRAGMA table_info(links)")}
+        if "lang" not in existing:
+            conn.execute("ALTER TABLE links ADD COLUMN lang TEXT NOT NULL DEFAULT ''")
+        if "muted" not in existing:
+            conn.execute("ALTER TABLE links ADD COLUMN muted INTEGER NOT NULL DEFAULT 0")
 
 
 def get_link(user_id):
     with _connect() as conn:
         row = conn.execute(
-            "SELECT chat_id, telegram_username, linked_at FROM links WHERE devtrack_user_id = ?",
+            "SELECT devtrack_user_id, chat_id, telegram_username, linked_at, lang, muted FROM links WHERE devtrack_user_id = ?",
             (user_id,),
         ).fetchone()
         return dict(row) if row else None
 
 
-def upsert_link(user_id, chat_id, telegram_username):
+def get_link_by_chat(chat_id):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT devtrack_user_id, chat_id, telegram_username, linked_at, lang, muted FROM links WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def set_lang(chat_id, lang):
+    with _connect() as conn:
+        conn.execute("UPDATE links SET lang = ? WHERE chat_id = ?", (lang, chat_id))
+
+
+def set_muted(chat_id, muted):
+    with _connect() as conn:
+        conn.execute("UPDATE links SET muted = ? WHERE chat_id = ?", (1 if muted else 0, chat_id))
+
+
+def upsert_link(user_id, chat_id, telegram_username, lang=""):
     with _connect() as conn:
         # A chat can only ever belong to one DevTrack account — re-linking
         # moves it rather than tripping the chat_id unique constraint.
         conn.execute("DELETE FROM links WHERE chat_id = ? AND devtrack_user_id != ?", (chat_id, user_id))
         conn.execute(
             """
-            INSERT INTO links (devtrack_user_id, chat_id, telegram_username, linked_at)
-            VALUES (?, ?, ?, datetime('now'))
+            INSERT INTO links (devtrack_user_id, chat_id, telegram_username, linked_at, lang)
+            VALUES (?, ?, ?, datetime('now'), ?)
             ON CONFLICT(devtrack_user_id) DO UPDATE SET
                 chat_id = excluded.chat_id,
                 telegram_username = excluded.telegram_username,
-                linked_at = excluded.linked_at
+                linked_at = excluded.linked_at,
+                lang = CASE WHEN excluded.lang != '' THEN excluded.lang ELSE links.lang END
             """,
-            (user_id, chat_id, telegram_username),
+            (user_id, chat_id, telegram_username, lang),
         )
 
 
